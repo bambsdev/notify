@@ -24,9 +24,10 @@ export const deviceTokenRoutes = new OpenAPIHono<{
     if (!result.success) {
       return c.json(
         {
-          success: false as const,
-          error: "VALIDATION_ERROR",
-          message: result.error.issues[0]?.message || "Input tidak valid",
+          error: {
+            code: "VALIDATION_ERROR",
+            message: result.error.issues[0]?.message || "Input tidak valid",
+          },
         },
         400,
       );
@@ -80,7 +81,6 @@ deviceTokenRoutes.openapi(registerDeviceTokenRoute, async (c) => {
 
     return c.json(
       {
-        success: true as const,
         data: {
           ...result,
           platform: result.platform as "android" | "ios" | "web",
@@ -93,7 +93,7 @@ deviceTokenRoutes.openapi(registerDeviceTokenRoute, async (c) => {
   } catch (err: any) {
     console.error("Error registering device token:", err);
     return c.json(
-      { success: false as const, error: "INTERNAL_ERROR", message: "Gagal mendaftarkan token" },
+      { error: { code: "INTERNAL_ERROR", message: "Gagal mendaftarkan token" } },
       500,
     );
   }
@@ -119,9 +119,7 @@ deviceTokenRoutes.openapi(deleteDeviceTokenRoute, async (c) => {
     if (existing && existing.userId !== userId) {
       return c.json(
         {
-          success: false as const,
-          error: "FORBIDDEN",
-          message: "Token bukan milik user ini",
+          error: { code: "FORBIDDEN", message: "Token bukan milik user ini" },
         },
         403,
       );
@@ -138,11 +136,11 @@ deviceTokenRoutes.openapi(deleteDeviceTokenRoute, async (c) => {
       userId,
     });
 
-    return c.json({ success: true as const }, 200);
+    return c.json({ data: { message: "Token berhasil dihapus" } }, 200);
   } catch (err: any) {
     console.error("Error deleting device token:", err);
     return c.json(
-      { success: false as const, error: "INTERNAL_ERROR", message: "Gagal menghapus token" },
+      { error: { code: "INTERNAL_ERROR", message: "Gagal menghapus token" } },
       500,
     );
   }
@@ -164,7 +162,6 @@ deviceTokenRoutes.openapi(listDeviceTokensRoute, async (c) => {
 
     return c.json(
       {
-        success: true as const,
         data: tokens.map((t) => ({
           ...t,
           platform: t.platform as "android" | "ios" | "web",
@@ -177,7 +174,7 @@ deviceTokenRoutes.openapi(listDeviceTokensRoute, async (c) => {
   } catch (err: any) {
     console.error("Error listing device tokens:", err);
     return c.json(
-      { success: false as const, error: "INTERNAL_ERROR", message: "Gagal memuat daftar token" },
+      { error: { code: "INTERNAL_ERROR", message: "Gagal memuat daftar token" } },
       500,
     );
   }

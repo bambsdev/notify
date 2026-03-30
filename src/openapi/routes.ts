@@ -50,7 +50,6 @@ export const registerDeviceTokenRoute = createRoute({
       content: {
         "application/json": {
           schema: z.object({
-            success: z.literal(true),
             data: DeviceTokenSchema,
           }),
         },
@@ -107,7 +106,6 @@ export const listDeviceTokensRoute = createRoute({
       content: {
         "application/json": {
           schema: z.object({
-            success: z.literal(true),
             data: z.array(DeviceTokenSchema),
           }),
         },

@@ -74,9 +74,8 @@ export const DeviceTokenSchema = z
 
 export const PaginatedNotificationsSchema = z
   .object({
-    success: z.literal(true),
-    data: z.object({
-      items: z.array(NotificationSchema),
+    data: z.array(NotificationSchema),
+    pagination: z.object({
       nextCursor: z.string().uuid().nullable(),
       hasMore: z.boolean(),
     }),
@@ -85,28 +84,29 @@ export const PaginatedNotificationsSchema = z
 
 export const UnreadCountSchema = z
   .object({
-    success: z.literal(true),
     data: z.object({ count: z.number() }),
   })
   .openapi("UnreadCount");
 
 export const SuccessSchema = z
   .object({
-    success: z.literal(true),
+    data: z.object({
+      message: z.string().openapi({ example: "Operasi berhasil" }),
+    }),
   })
   .openapi("SuccessResponse");
 
 export const SuccessWithCountSchema = z
   .object({
-    success: z.literal(true),
     data: z.object({ count: z.number() }),
   })
   .openapi("SuccessWithCount");
 
 export const ErrorSchema = z
   .object({
-    success: z.literal(false),
-    error: z.string().openapi({ example: "VALIDATION_ERROR" }),
-    message: z.string().optional().openapi({ example: "token wajib diisi" }),
+    error: z.object({
+      code: z.string().openapi({ example: "VALIDATION_ERROR" }),
+      message: z.string().openapi({ example: "token wajib diisi" }),
+    }),
   })
   .openapi("ErrorResponse");

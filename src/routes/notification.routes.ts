@@ -25,9 +25,10 @@ export const notifyRoutes = new OpenAPIHono<{
     if (!result.success) {
       return c.json(
         {
-          success: false as const,
-          error: "VALIDATION_ERROR",
-          message: result.error.issues[0]?.message || "Input tidak valid",
+          error: {
+            code: "VALIDATION_ERROR",
+            message: result.error.issues[0]?.message || "Input tidak valid",
+          },
         },
         400,
       );
@@ -51,7 +52,7 @@ function errorResponse(c: any, err: any) {
   const status = err.status ?? 500;
   const code = err.code ?? "INTERNAL_ERROR";
   return c.json(
-    { success: false as const, error: code, message: err.message },
+    { error: { code, message: err.message } },
     status,
   );
 }
@@ -70,14 +71,13 @@ notifyRoutes.openapi(listNotificationsRoute, async (c) => {
 
     return c.json(
       {
-        success: true as const,
-        data: {
-          items: result.items.map((item) => ({
-            ...item,
-            createdAt: item.createdAt.toISOString(),
-            readAt: item.readAt ? item.readAt.toISOString() : null,
-            expiresAt: item.expiresAt ? item.expiresAt.toISOString() : null,
-          })),
+        data: result.items.map((item) => ({
+          ...item,
+          createdAt: item.createdAt.toISOString(),
+          readAt: item.readAt ? item.readAt.toISOString() : null,
+          expiresAt: item.expiresAt ? item.expiresAt.toISOString() : null,
+        })),
+        pagination: {
           nextCursor: result.nextCursor,
           hasMore: result.hasMore,
         },
@@ -100,7 +100,7 @@ notifyRoutes.openapi(unreadCountRoute, async (c) => {
   try {
     const count = await service.unreadCount(userId);
     return c.json(
-      { success: true as const, data: { count } },
+      { data: { count } },
       200,
     );
   } catch (err: any) {
@@ -119,7 +119,7 @@ notifyRoutes.openapi(markReadRoute, async (c) => {
 
   try {
     await service.markRead(id, userId);
-    return c.json({ success: true as const }, 200);
+    return c.json({ data: { message: "Notifikasi ditandai telah dibaca" } }, 200);
   } catch (err: any) {
     return errorResponse(c, err);
   }
@@ -136,7 +136,7 @@ notifyRoutes.openapi(markAllReadRoute, async (c) => {
   try {
     const result = await service.markAllRead(userId);
     return c.json(
-      { success: true as const, data: { count: result.count } },
+      { data: { count: result.count } },
       200,
     );
   } catch (err: any) {
