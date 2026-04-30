@@ -63,6 +63,7 @@ export const notifications = pgTable(
       table.isRead,
     ),
     createdAtIdx: index("notifications_created_at_idx").on(table.createdAt),
+    expiresAtIdx: index("notifications_expires_at_idx").on(table.expiresAt),
   }),
 );
 
