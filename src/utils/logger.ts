@@ -1,15 +1,28 @@
 // src/utils/logger.ts
 import type { MiddlewareHandler } from "hono";
-import type { NotifyBindings, NotifyVariables } from "../types";
+import type { NotifyBindings, NotifyVariables, NotifyLogger } from "../types";
 
-export const customLogger = (): MiddlewareHandler<{
+/**
+ * Middleware untuk meng-inject Dependency Logger dari consumer app ke dalam Hono Context
+ * dan memproses HTTP request log secara terstruktur sesuai standar industri.
+ */
+export const customLogger = (
+  injectedLogger?: NotifyLogger,
+): MiddlewareHandler<{
   Bindings: NotifyBindings;
   Variables: NotifyVariables;
 }> => {
   return async (c, next) => {
+    if (injectedLogger) {
+      c.set("logger", injectedLogger);
+    }
+
     const start = Date.now();
     await next();
     const ms = Date.now() - start;
+
+    const logger = injectedLogger ?? c.get("logger");
+    if (!logger) return;
 
     const ip =
       c.req.header("CF-Connecting-IP") ||
@@ -18,21 +31,36 @@ export const customLogger = (): MiddlewareHandler<{
     const method = c.req.method;
     const url = new URL(c.req.url).pathname;
     const status = c.res.status;
-    const userId = c.get("userId") ? ` User:${c.get("userId")}` : "";
-    const timestamp = new Date().toISOString();
+    const userId = c.get("userId") || undefined;
+
+    const meta = {
+      event: "notify_http_request",
+      latency_ms: ms,
+      http: {
+        method,
+        path: url,
+        status,
+        ip,
+      },
+      userId,
+    };
+
+    const msg = `Notify HTTP ${method} ${url} - ${status} (${ms}ms)`;
 
     if (status >= 500) {
-      console.error(
-        `🔴 [${timestamp}] ERROR: ${method} ${url} - ${status} (${ms}ms) IP:${ip}${userId}`,
-      );
+      logger.error?.(msg, meta);
     } else if (status >= 400) {
-      console.warn(
-        `🟠 [${timestamp}] WARN: ${method} ${url} - ${status} (${ms}ms) IP:${ip}${userId}`,
-      );
+      logger.warn?.(msg, meta);
     } else {
-      console.log(
-        `🟢 [${timestamp}] INFO: ${method} ${url} - ${status} (${ms}ms) IP:${ip}${userId}`,
-      );
+      logger.info?.(msg, meta);
     }
   };
 };
+
+/**
+ * Helper untuk mengambil logger dari Hono context dengan aman (safe fallback jika tidak ada logger).
+ */
+export function getLogger(c?: { get: (key: "logger") => NotifyLogger | undefined }): NotifyLogger {
+  return c?.get("logger") ?? {};
+}
+

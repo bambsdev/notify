@@ -19,8 +19,13 @@ export const deviceTokens = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     userId: text("user_id").notNull(),
-    token: text("token").notNull().unique(), // FCM registration token
+    token: text("token").notNull().unique(), // FCM registration token or Web Push endpoint
     platform: text("platform").notNull(), // "android" | "ios" | "web"
+    provider: text("provider").notNull().default("fcm"), // "fcm" | "webpush"
+    subscriptionKeys: jsonb("subscription_keys").$type<{
+      p256dh: string;
+      auth: string;
+    }>(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),

@@ -8,6 +8,7 @@
 
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { FCMService } from "../services/fcm.service";
+import { WebPushService } from "../services/webpush.service";
 import { NotificationService } from "../services/notification.service";
 import {
   listNotificationsRoute,
@@ -45,7 +46,15 @@ function makeNotificationService(c: any): NotificationService {
     c.env.FCM_PROJECT_ID,
     c.env.FCM_SERVICE_ACCOUNT_KEY,
   );
-  return new NotificationService(db, fcm, c.env.ANALYTICS);
+  const webPush =
+    c.env.VAPID_PUBLIC_KEY && c.env.VAPID_PRIVATE_KEY && c.env.VAPID_SUBJECT
+      ? new WebPushService(
+          c.env.VAPID_PUBLIC_KEY,
+          c.env.VAPID_PRIVATE_KEY,
+          c.env.VAPID_SUBJECT,
+        )
+      : undefined;
+  return new NotificationService(db, fcm, c.env.ANALYTICS, webPush);
 }
 
 function errorResponse(c: any, err: any) {

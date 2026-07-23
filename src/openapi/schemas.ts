@@ -14,6 +14,19 @@ export const RegisterDeviceTokenBodySchema = z
       .min(1, "token wajib diisi")
       .openapi({ example: "fMq3R...xyz" }),
     platform: z.enum(["android", "ios", "web"]).openapi({ example: "android" }),
+    provider: z.enum(["fcm", "webpush"]).default("fcm").openapi({ example: "fcm" }),
+    keys: z
+      .object({
+        p256dh: z.string(),
+        auth: z.string(),
+      })
+      .optional()
+      .openapi({
+        example: {
+          p256dh: "BC...",
+          auth: "a1...",
+        },
+      }),
   })
   .openapi("RegisterDeviceTokenBody");
 
@@ -67,6 +80,13 @@ export const DeviceTokenSchema = z
     userId: z.string(),
     token: z.string(),
     platform: z.enum(["android", "ios", "web"]),
+    provider: z.enum(["fcm", "webpush"]),
+    subscriptionKeys: z
+      .object({
+        p256dh: z.string(),
+        auth: z.string(),
+      })
+      .nullable(),
     createdAt: z.string().datetime(),
     lastUsedAt: z.string().datetime(),
   })

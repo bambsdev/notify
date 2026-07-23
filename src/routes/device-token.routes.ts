@@ -14,6 +14,7 @@ import {
   listDeviceTokensRoute,
 } from "../openapi/routes";
 import { logAnalytics } from "../utils/analytics";
+import { getLogger } from "../utils/logger";
 import type { NotifyBindings, NotifyVariables } from "../types";
 
 export const deviceTokenRoutes = new OpenAPIHono<{
@@ -40,7 +41,7 @@ export const deviceTokenRoutes = new OpenAPIHono<{
 // ╚══════════════════════════════════════════════════════════════╝
 
 deviceTokenRoutes.openapi(registerDeviceTokenRoute, async (c) => {
-  const { token, platform } = c.req.valid("json");
+  const { token, platform, provider, keys } = c.req.valid("json");
   const userId = c.get("userId");
   const db = c.var.db;
 
@@ -61,6 +62,8 @@ deviceTokenRoutes.openapi(registerDeviceTokenRoute, async (c) => {
         .set({
           userId,
           platform,
+          provider: provider ?? "fcm",
+          subscriptionKeys: keys ?? null,
           lastUsedAt: new Date(),
         })
         .where(eq(deviceTokens.token, token))
@@ -69,7 +72,13 @@ deviceTokenRoutes.openapi(registerDeviceTokenRoute, async (c) => {
       // Insert baru
       [result] = await db
         .insert(deviceTokens)
-        .values({ userId, token, platform })
+        .values({
+          userId,
+          token,
+          platform,
+          provider: provider ?? "fcm",
+          subscriptionKeys: keys ?? null,
+        })
         .returning();
     }
 
@@ -89,7 +98,7 @@ deviceTokenRoutes.openapi(registerDeviceTokenRoute, async (c) => {
       201,
     );
   } catch (err: any) {
-    console.error("Error registering device token:", err);
+    getLogger(c).error?.("Error registering device token", { userId }, err);
     return c.json(
       { error: { code: "INTERNAL_ERROR", message: "Gagal mendaftarkan token" } },
       500,
@@ -136,7 +145,7 @@ deviceTokenRoutes.openapi(deleteDeviceTokenRoute, async (c) => {
 
     return c.json({ data: { message: "Token berhasil dihapus" } }, 200);
   } catch (err: any) {
-    console.error("Error deleting device token:", err);
+    getLogger(c).error?.("Error deleting device token", { userId }, err);
     return c.json(
       { error: { code: "INTERNAL_ERROR", message: "Gagal menghapus token" } },
       500,
@@ -163,6 +172,7 @@ deviceTokenRoutes.openapi(listDeviceTokensRoute, async (c) => {
         data: tokens.map((t) => ({
           ...t,
           platform: t.platform as "android" | "ios" | "web",
+          provider: t.provider as "fcm" | "webpush",
           createdAt: t.createdAt.toISOString(),
           lastUsedAt: t.lastUsedAt.toISOString(),
         })),
@@ -170,7 +180,7 @@ deviceTokenRoutes.openapi(listDeviceTokensRoute, async (c) => {
       200,
     );
   } catch (err: any) {
-    console.error("Error listing device tokens:", err);
+    getLogger(c).error?.("Error listing device tokens", { userId }, err);
     return c.json(
       { error: { code: "INTERNAL_ERROR", message: "Gagal memuat daftar token" } },
       500,

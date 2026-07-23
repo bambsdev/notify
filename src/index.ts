@@ -9,7 +9,7 @@ export { deviceTokenRoutes } from "./routes/device-token.routes";
 
 // ── Middleware ─────────────────────────────────────────────────────────────────
 export { dbMiddleware } from "./db/client";
-export { customLogger } from "./utils/logger";
+export { customLogger, getLogger } from "./utils/logger";
 
 // ── Services (reusable untuk consumer app) ────────────────────────────────────
 export { FCMService } from "./services/fcm.service";
@@ -25,6 +25,7 @@ export type { DB } from "./db/client";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export type {
+  NotifyLogger,
   NotifyBindings,
   NotifyVariables,
   SendPushOptions,

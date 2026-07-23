@@ -16,8 +16,9 @@ import { Client } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { deviceTokens, notifications, schema } from "../db/schema";
 import type { FCMService } from "./fcm.service";
+import type { WebPushService } from "./webpush.service";
 import type { DB } from "../db/client";
-import type { CreateNotificationOptions } from "../types";
+import type { CreateNotificationOptions, NotifyLogger } from "../types";
 import { logAnalytics, type NotifyAnalyticsEvent } from "../utils/analytics";
 
 export class NotificationService {
@@ -25,12 +26,13 @@ export class NotificationService {
     private db: DB,
     private fcm: FCMService,
     private analytics: AnalyticsEngineDataset,
+    private webPush?: WebPushService,
   ) {}
 
   /**
    * Buat in-app notification.
    * Jika options.withPush = true, otomatis fetch semua device token user
-   * dan kirim FCM push. Token invalid akan dihapus dari DB.
+   * dan kirim FCM / Web Push. Token invalid akan dihapus dari DB.
    */
   async create(options: CreateNotificationOptions) {
     // 1. Insert notifikasi ke DB
@@ -51,42 +53,118 @@ export class NotificationService {
       userId: options.userId,
     });
 
-    // 2. Jika withPush = true, kirim FCM push ke semua device user
+    // 2. Jika withPush = true, kirim FCM / Web Push ke semua device user
     if (options.withPush) {
-      const tokens = await this.db
-        .select({ token: deviceTokens.token })
+      const devices = await this.db
+        .select({
+          token: deviceTokens.token,
+          provider: deviceTokens.provider,
+          subscriptionKeys: deviceTokens.subscriptionKeys,
+        })
         .from(deviceTokens)
         .where(eq(deviceTokens.userId, options.userId));
 
-      if (tokens.length > 0) {
-        const tokenStrings = tokens.map((t) => t.token);
-        const result = await this.fcm.sendToTokens(tokenStrings, {
-          title: options.title,
-          body: options.body,
-          imageUrl: options.imageUrl,
-          data: options.data,
-        });
+      if (devices.length > 0) {
+        const fcmTokens: string[] = [];
+        const webpushDevices: Array<{
+          endpoint: string;
+          keys: { p256dh: string; auth: string };
+        }> = [];
 
-        // Update fcmMessageId jika berhasil
-        if (result.successCount > 0) {
-          logAnalytics(this.analytics, {
-            event: "push_sent",
-            userId: options.userId,
-            doubles: [result.successCount],
-          });
+        for (const d of devices) {
+          if (
+            d.provider === "webpush" &&
+            d.subscriptionKeys?.p256dh &&
+            d.subscriptionKeys?.auth
+          ) {
+            webpushDevices.push({
+              endpoint: d.token,
+              keys: d.subscriptionKeys,
+            });
+          } else {
+            fcmTokens.push(d.token);
+          }
         }
 
-        if (result.failureCount > 0) {
-          logAnalytics(this.analytics, {
-            event: "push_failed",
-            userId: options.userId,
-            doubles: [result.failureCount],
+        const invalidTokensToPrune: string[] = [];
+
+        // FCM Push
+        if (fcmTokens.length > 0) {
+          const result = await this.fcm.sendToTokens(fcmTokens, {
+            title: options.title,
+            body: options.body,
+            imageUrl: options.imageUrl,
+            data: options.data,
           });
+
+          if (result.successCount > 0) {
+            logAnalytics(this.analytics, {
+              event: "push_sent",
+              userId: options.userId,
+              doubles: [result.successCount],
+            });
+          }
+
+          if (result.failureCount > 0) {
+            logAnalytics(this.analytics, {
+              event: "push_failed",
+              userId: options.userId,
+              doubles: [result.failureCount],
+            });
+          }
+
+          if (result.failedTokens.length > 0) {
+            invalidTokensToPrune.push(...result.failedTokens);
+          }
+        }
+
+        // Web Push
+        if (this.webPush && webpushDevices.length > 0) {
+          const webpushResults = await Promise.allSettled(
+            webpushDevices.map((wp) =>
+              this.webPush!.sendNotification(wp, {
+                title: options.title,
+                body: options.body,
+                imageUrl: options.imageUrl,
+                data: options.data,
+              }),
+            ),
+          );
+
+          let wpSuccess = 0;
+          let wpFailure = 0;
+
+          webpushResults.forEach((res, idx) => {
+            if (res.status === "fulfilled" && res.value.success) {
+              wpSuccess++;
+            } else {
+              wpFailure++;
+              if (res.status === "fulfilled" && res.value.invalidToken) {
+                invalidTokensToPrune.push(webpushDevices[idx].endpoint);
+              }
+            }
+          });
+
+          if (wpSuccess > 0) {
+            logAnalytics(this.analytics, {
+              event: "push_sent",
+              userId: options.userId,
+              doubles: [wpSuccess],
+            });
+          }
+
+          if (wpFailure > 0) {
+            logAnalytics(this.analytics, {
+              event: "push_failed",
+              userId: options.userId,
+              doubles: [wpFailure],
+            });
+          }
         }
 
         // Hapus token yang sudah tidak valid
-        if (result.failedTokens.length > 0) {
-          await this.pruneInvalidTokens(result.failedTokens);
+        if (invalidTokensToPrune.length > 0) {
+          await this.pruneInvalidTokens(invalidTokensToPrune);
         }
       }
     }
@@ -285,12 +363,11 @@ export class NotificationService {
 // ── Standalone Cleanup Function (untuk cron) ──────────────────────────────────
 
 /**
- * Cleanup expired notifications. Dipanggil oleh consumer app di scheduled handler.
- * Creates its own DB connection (same pattern as auth's cleanupExpiredTokens).
+ * Helper untuk menghapus notifikasi yang sudah kedaluwarsa via Scheduled Worker / Cron Job.
  */
 export async function cleanupExpiredNotifications(
   connectionString: string,
-  opts?: { deleteExpiredAfterDays?: number },
+  opts?: { deleteExpiredAfterDays?: number; logger?: NotifyLogger },
 ): Promise<void> {
   const client = new Client({ connectionString });
 
@@ -314,11 +391,12 @@ export async function cleanupExpiredNotifications(
         ),
       );
 
-    console.log(
+    opts?.logger?.info?.(
       `[cron] Expired notifications cleaned up. Rows affected: ${result.rowCount}`,
+      { event: "cron_cleanup_notifications_success", rowCount: result.rowCount },
     );
   } catch (error) {
-    console.error("[cron] Error cleaning up expired notifications:", error);
+    opts?.logger?.error?.("[cron] Error cleaning up expired notifications", { event: "cron_cleanup_notifications_failed" }, error);
     throw error;
   } finally {
     await client.end().catch(() => {});

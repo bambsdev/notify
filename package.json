@@ -1,6 +1,6 @@
 {
   "name": "@bambsdev/notify",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -37,15 +37,15 @@
     "zod": ">=4.0.0"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260301.1",
-    "@hono/zod-openapi": "^1.2.3",
+    "@cloudflare/workers-types": "^4.20260702.1",
+    "@hono/zod-openapi": "^1.5.1",
     "@types/bun": "latest",
-    "@types/pg": "^8.18.0",
-    "drizzle-orm": "^0.45.1",
-    "hono": "^4.12.7",
-    "pg": "^8.19.0",
-    "tsup": "^8.0.0",
+    "@types/pg": "^8.20.0",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.12.31",
+    "pg": "^8.22.0",
+    "tsup": "^8.5.1",
     "typescript": "^5.9.3",
-    "zod": "^4.3.6"
+    "zod": "^4.4.3"
   }
 }

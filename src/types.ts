@@ -20,8 +20,32 @@ export interface NotifyBindings {
   FCM_SERVICE_ACCOUNT_KEY: string; // JSON string dari Google service account
   FCM_PROJECT_ID: string; // Firebase project ID
 
+  // VAPID credentials untuk Native Web Push
+  VAPID_PUBLIC_KEY: string;
+  VAPID_PRIVATE_KEY: string;
+  VAPID_SUBJECT: string; // mailto: format (e.g. mailto:admin@example.com)
+
   // Local dev bypass
   LOCAL_DATABASE_URL?: string;
+}
+
+// ── Web Push (VAPID) ──────────────────────────────────────────────────────────
+
+export interface WebPushSubscription {
+  endpoint: string;
+  keys: {
+    p256dh: string;
+    auth: string;
+  };
+}
+
+// ── Logger Interface (Industry Standard Dependency Injection) ─────────────────
+
+export interface NotifyLogger {
+  debug?: (message: string, metadata?: Record<string, unknown>) => void;
+  info?: (message: string, metadata?: Record<string, unknown>) => void;
+  warn?: (message: string, metadata?: Record<string, unknown>) => void;
+  error?: (message: string, metadata?: Record<string, unknown>, error?: Error | unknown) => void;
 }
 
 // ── Hono Context Variables (injected per-request) ─────────────────────────────
@@ -29,6 +53,7 @@ export interface NotifyBindings {
 export interface NotifyVariables {
   db: DB;
   userId: string; // Di-inject oleh authMiddleware dari @bambsdev/auth
+  logger?: NotifyLogger;
 }
 
 // ── FCM Push ──────────────────────────────────────────────────────────────────

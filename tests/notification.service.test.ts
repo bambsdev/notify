@@ -18,6 +18,12 @@ function createMockFcm(batchResult = { successCount: 1, failureCount: 0, failedT
   } as any;
 }
 
+function createMockWebPush(result: any = { success: true }) {
+  return {
+    sendNotification: mock(async () => result),
+  } as any;
+}
+
 function createMockAnalytics() {
   return {
     writeDataPoint: mock(() => {}),
@@ -180,6 +186,59 @@ describe("notify/NotificationService: create", () => {
     expect(capturedValues.imageUrl).toBe("https://example.com/img.jpg");
     expect(capturedValues.data).toEqual({ action: "open" });
     expect(capturedValues.expiresAt).toEqual(expiresAt);
+  });
+
+  test("sends both FCM and WebPush when user has mixed device tokens", async () => {
+    const fcm = createMockFcm();
+    const webPush = createMockWebPush();
+    const db = createMockDb({
+      select: mock(() => ({
+        from: mock(() => ({
+          where: mock(async () => [
+            { token: "fcm-token-1", provider: "fcm" },
+            {
+              token: "https://push.endpoint/sub-1",
+              provider: "webpush",
+              subscriptionKeys: { p256dh: "key-1", auth: "auth-1" },
+            },
+          ]),
+        })),
+      })),
+    });
+    const svc = new NotificationService(db, fcm, createMockAnalytics(), webPush);
+
+    await svc.create({ userId: "user-1", title: "T", body: "B", withPush: true });
+
+    expect(fcm.sendToTokens.mock.calls.length).toBe(1);
+    expect(webPush.sendNotification.mock.calls.length).toBe(1);
+    expect(webPush.sendNotification.mock.calls[0][0]).toEqual({
+      endpoint: "https://push.endpoint/sub-1",
+      keys: { p256dh: "key-1", auth: "auth-1" },
+    });
+  });
+
+  test("prunes invalid WebPush token when WebPushService returns invalidToken", async () => {
+    const fcm = createMockFcm();
+    const webPush = createMockWebPush({ success: false, invalidToken: true });
+    const db = createMockDb({
+      select: mock(() => ({
+        from: mock(() => ({
+          where: mock(async () => [
+            {
+              token: "https://push.endpoint/stale-sub",
+              provider: "webpush",
+              subscriptionKeys: { p256dh: "k", auth: "a" },
+            },
+          ]),
+        })),
+      })),
+    });
+    const svc = new NotificationService(db, fcm, createMockAnalytics(), webPush);
+
+    await svc.create({ userId: "user-1", title: "T", body: "B", withPush: true });
+
+    expect(webPush.sendNotification.mock.calls.length).toBe(1);
+    expect(db.delete.mock.calls.length).toBeGreaterThan(0);
   });
 });
 
