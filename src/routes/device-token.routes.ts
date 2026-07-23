@@ -82,10 +82,8 @@ deviceTokenRoutes.openapi(registerDeviceTokenRoute, async (c) => {
     return c.json(
       {
         data: {
-          ...result,
+          id: result.id,
           platform: result.platform as "android" | "ios" | "web",
-          createdAt: result.createdAt.toISOString(),
-          lastUsedAt: result.lastUsedAt.toISOString(),
         },
       },
       201,

@@ -50,7 +50,10 @@ export const registerDeviceTokenRoute = createRoute({
       content: {
         "application/json": {
           schema: z.object({
-            data: DeviceTokenSchema,
+            data: z.object({
+              id: z.string().uuid(),
+              platform: z.enum(["android", "ios", "web"]),
+            }),
           }),
         },
       },
@@ -120,7 +123,7 @@ export const listDeviceTokensRoute = createRoute({
 
 export const listNotificationsRoute = createRoute({
   method: "get",
-  path: "/notifications",
+  path: "/",
   tags: ["Notifications"],
   summary: "List in-app notifications",
   description: "Cursor-based pagination. Urutkan createdAt DESC.",
@@ -139,7 +142,7 @@ export const listNotificationsRoute = createRoute({
 
 export const unreadCountRoute = createRoute({
   method: "get",
-  path: "/notifications/unread-count",
+  path: "/unread-count",
   tags: ["Notifications"],
   summary: "Jumlah notifikasi belum dibaca",
   description: "Untuk badge counter di ikon lonceng.",
@@ -155,7 +158,7 @@ export const unreadCountRoute = createRoute({
 
 export const markReadRoute = createRoute({
   method: "put",
-  path: "/notifications/{id}/read",
+  path: "/{id}/read",
   tags: ["Notifications"],
   summary: "Tandai satu notifikasi sudah dibaca",
   security: bearerAuth,
@@ -188,7 +191,7 @@ export const markReadRoute = createRoute({
 
 export const markAllReadRoute = createRoute({
   method: "put",
-  path: "/notifications/read-all",
+  path: "/read-all",
   tags: ["Notifications"],
   summary: "Tandai semua notifikasi sudah dibaca",
   security: bearerAuth,
