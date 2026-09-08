@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.0.0] - 2026-09-08
+## [2.0.0] - 2026-09-08
 
 ### 🚨 BREAKING CHANGES
 
@@ -26,13 +26,13 @@ The root entrypoint (`@bambsdev/notify`) now only exports database-agnostic serv
 
 ---
 
-### 🔄 Migration Guide (Upgrading from <1.0.0 to 1.0.0)
+### 🔄 Migration Guide (Upgrading from v1.x to v2.0.0)
 
 #### 1. If You Use PostgreSQL (Neon / Hyperdrive)
 
 Change your import statements from `@bambsdev/notify` to `@bambsdev/notify/pg`:
 
-**Before (<1.0.0):**
+**Before (v1.x):**
 ```typescript
 import { 
   notifyRoutes, 
@@ -44,7 +44,7 @@ import {
 } from "@bambsdev/notify";
 ```
 
-**After (v1.0.0):**
+**After (v2.0.0):**
 ```typescript
 import { 
   notifyRoutes, 
