@@ -1,6 +1,7 @@
 # 🔔 @bambsdev/notify
 
 > Enterprise-grade, edge-native notification package (FCM Push, WebPush VAPID, & In-App Feed) for **Hono**, **Cloudflare Workers**, and **Drizzle ORM**.
+> Supports **PostgreSQL (Neon / Hyperdrive)** and **Cloudflare D1 (SQLite)**.
 > Designed for high-performance serverless ecosystems and seamless integration with `@bambsdev/auth`.
 
 [![npm version](https://img.shields.io/npm/v/@bambsdev/notify.svg)](https://www.npmjs.com/package/@bambsdev/notify)
@@ -11,10 +12,13 @@
 
 ## 🌟 Key Features
 
+- **🗄️ Multi-Database Architecture:**
+  - Explicit imports: **`@bambsdev/notify/pg`** for PostgreSQL and **`@bambsdev/notify/d1`** for Cloudflare D1.
+  - No unnecessary drivers bundled (e.g. `pg` is optional when using D1).
 - **📱 Multi-Channel Push Notifications:**
   - **Firebase Cloud Messaging (FCM HTTP v1):** Push notifications to Android, iOS, and Web devices.
   - **Native WebPush (VAPID):** Standard WebPush payload delivery built with Web Crypto API (`ECDSA P-256`, `AES-128-GCM`) tailored for Cloudflare Edge Runtime without heavyweight Node.js dependencies.
-- **📥 In-App Notification Feed:** Complete inbox management stored in PostgreSQL with cursor-based pagination, unread counters, bulk read, and configurable auto-expiration.
+- **📥 In-App Notification Feed:** Complete inbox management stored in your database (PostgreSQL or D1) with cursor-based pagination, unread counters, bulk read, and configurable auto-expiration.
 - **🔑 Automated FCM OAuth2 Token Lifecycle:** Automatic OAuth2 token retrieval and caching using Cloudflare KV with TTL management.
 - **📊 Real-time Edge Analytics:** Direct integration with Cloudflare Analytics Engine dataset for auditing delivery logs, registration metrics, and latency analysis.
 - **📐 OpenAPI / Swagger Ready:** Fully typed OpenAPI routes powered by `@hono/zod-openapi` for instant Swagger UI generation.
@@ -32,10 +36,17 @@ bun add @bambsdev/notify
 
 ### Peer Dependencies
 
-Ensure your project includes the required peer dependencies:
+Install the appropriate peer dependencies based on your database stack:
 
+**For PostgreSQL (Neon / Hyperdrive):**
 ```bash
 bun add hono drizzle-orm pg zod @hono/zod-openapi
+```
+
+**For Cloudflare D1 (SQLite):**
+```bash
+bun add hono drizzle-orm zod @hono/zod-openapi
+# Note: 'pg' is optional and NOT required for D1!
 ```
 
 ---
@@ -43,6 +54,8 @@ bun add hono drizzle-orm pg zod @hono/zod-openapi
 ## ⚙️ Configuration & Cloudflare Setup (`wrangler.toml`)
 
 Add the required bindings to your consumer project's `wrangler.toml`:
+
+### 1. Common Bindings & Variables (Both PG and D1)
 
 ```toml
 name = "my-hono-app"
@@ -55,12 +68,6 @@ compatibility_flags = ["nodejs_compat"]
 FCM_PROJECT_ID = "your-firebase-project-id"
 VAPID_PUBLIC_KEY = "your-vapid-public-key-p256"
 VAPID_SUBJECT = "mailto:admin@example.com"
-# LOCAL_DATABASE_URL = "postgres://postgres:postgres@localhost:5432/mydb" # Optional local dev fallback
-
-# Hyperdrive for PostgreSQL database connection pooling
-[[hyperdrive]]
-binding = "HYPERDRIVE"
-id = "your-hyperdrive-id"
 
 # KV Namespace for FCM OAuth2 token caching
 [[kv_namespaces]]
@@ -72,6 +79,40 @@ id = "your-kv-namespace-id"
 binding = "ANALYTICS"
 ```
 
+### 2. Database Binding
+
+#### Option A: PostgreSQL via Hyperdrive (`@bambsdev/notify/pg`)
+
+```toml
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "your-hyperdrive-id"
+
+# Optional local dev fallback in [vars]:
+# LOCAL_DATABASE_URL = "postgres://postgres:postgres@localhost:5432/mydb"
+```
+
+#### Option B: Cloudflare D1 (`@bambsdev/notify/d1`)
+
+```toml
+[[d1_databases]]
+binding = "DB"
+database_name = "my-db"
+database_id = "your-d1-database-id"
+```
+
+---
+
+### 🔑 Generating VAPID Keys
+
+Consumer apps can generate a new ECDSA P-256 VAPID keypair directly from `node_modules` using the bundled CLI tool:
+
+```bash
+bunx notify-keys
+# or
+npx notify-keys
+```
+
 ### Secrets Setup
 
 Set sensitive secrets via `wrangler secret`:
@@ -80,7 +121,7 @@ Set sensitive secrets via `wrangler secret`:
 # Firebase Service Account JSON string
 wrangler secret put FCM_SERVICE_ACCOUNT_KEY
 
-# WebPush VAPID Private Key (PKCS#8 Base64URL string)
+# WebPush VAPID Private Key
 wrangler secret put VAPID_PRIVATE_KEY
 ```
 
@@ -88,18 +129,18 @@ wrangler secret put VAPID_PRIVATE_KEY
 
 ## 🛠️ Database Integration (Drizzle ORM)
 
-Export the `@bambsdev/notify` schema inside your project's `drizzle.config.ts` so Drizzle Kit includes the notification tables during migrations:
+Export the schema inside your project's `drizzle.config.ts` so Drizzle Kit includes the notification tables during migrations:
 
+### PostgreSQL (`drizzle.config.ts`):
 ```typescript
 import { defineConfig } from "drizzle-kit";
 
 export default defineConfig({
   schema: [
-    "./node_modules/@bambsdev/auth/dist/index.js",
-    "./node_modules/@bambsdev/notify/dist/index.js",
+    "./node_modules/@bambsdev/notify/dist/pg/index.js",
     "./src/db/schema.ts", // Your application schemas
   ],
-  out: "./drizzle",
+  out: "./drizzle/pg",
   dialect: "postgresql",
   dbCredentials: {
     url: process.env.DATABASE_URL!,
@@ -107,34 +148,74 @@ export default defineConfig({
 });
 ```
 
+### Cloudflare D1 (`drizzle.config.ts`):
+```typescript
+import { defineConfig } from "drizzle-kit";
+
+export default defineConfig({
+  schema: [
+    "./node_modules/@bambsdev/notify/dist/d1/index.js",
+    "./src/db/schema.ts", // Your application schemas
+  ],
+  out: "./drizzle/d1",
+  dialect: "sqlite",
+});
+```
+
 ---
 
 ## 🚦 Routing & Mounting in Hono
 
-Mount `@bambsdev/notify` OpenAPI routes in your Hono application.
-
-> ℹ️ **Note:** Ensure `authMiddleware` (from `@bambsdev/auth`) or your custom auth middleware runs before notification routes to set `c.set("userId", userId)`.
+### 1. Using PostgreSQL (`@bambsdev/notify/pg`)
 
 ```typescript
 import { Hono } from "hono";
-import { authMiddleware } from "@bambsdev/auth";
+import { authMiddleware } from "@bambsdev/auth/pg";
 import { 
   notifyRoutes, 
   deviceTokenRoutes, 
-  dbMiddleware as notifyDb 
-} from "@bambsdev/notify";
+  dbMiddleware as notifyDb,
+  type PgBindings as Env
+} from "@bambsdev/notify/pg";
 
 const app = new Hono<{ Bindings: Env }>();
 
 // 1. Device Token Routes (/api/device-token)
 app.use("/api/device-token/*", notifyDb);
 app.use("/api/device-token/*", authMiddleware);
-app.route("/api/device-token", deviceTokenRoutes);
+app.route("/api", deviceTokenRoutes);
 
 // 2. Notification Feed Routes (/api/notifications)
 app.use("/api/notifications/*", notifyDb);
 app.use("/api/notifications/*", authMiddleware);
-app.route("/api/notifications", notifyRoutes);
+app.route("/api", notifyRoutes);
+
+export default app;
+```
+
+### 2. Using Cloudflare D1 (`@bambsdev/notify/d1`)
+
+```typescript
+import { Hono } from "hono";
+import { authMiddleware } from "@bambsdev/auth/d1";
+import { 
+  notifyRoutes, 
+  deviceTokenRoutes, 
+  d1Middleware as notifyDb,
+  type D1Bindings as Env
+} from "@bambsdev/notify/d1";
+
+const app = new Hono<{ Bindings: Env }>();
+
+// 1. Device Token Routes (/api/device-token)
+app.use("/api/device-token/*", notifyDb);
+app.use("/api/device-token/*", authMiddleware);
+app.route("/api", deviceTokenRoutes);
+
+// 2. Notification Feed Routes (/api/notifications)
+app.use("/api/notifications/*", notifyDb);
+app.use("/api/notifications/*", authMiddleware);
+app.route("/api", notifyRoutes);
 
 export default app;
 ```
@@ -160,6 +241,7 @@ export default app;
     {
       "token": "https://fcm.googleapis.com/fcm/send/ebX...",
       "platform": "webpush",
+      "provider": "webpush",
       "keys": {
         "p256dh": "BNc...=",
         "auth": "tBC...="
@@ -184,18 +266,10 @@ export default app;
   Retrieve paginated in-app notification feed.
   - **Query Parameters:**
     - `limit` *(optional)*: Number of items per page (default: `20`, max: `50`).
-    - `cursor` *(optional)*: ID of the last item from previous page for cursor pagination.
-    - `onlyUnread` *(optional)*: Pass `"true"` to filter unread notifications only.
+    - `cursor` *(optional)*: UUID of the last item from previous page for cursor pagination.
+    - `onlyUnread` *(optional)*: Pass `true` to filter unread notifications only.
 - **`GET /api/notifications/unread-count`**
-  Get total count of unread notifications for badge counts.
-  ```json
-  {
-    "success": true,
-    "data": {
-      "unreadCount": 5
-    }
-  }
-  ```
+  Get total count of unread notifications for badge counters.
 - **`PUT /api/notifications/:id/read`**
   Mark a single notification as read by ID.
 - **`PUT /api/notifications/read-all`**
@@ -205,15 +279,18 @@ export default app;
 
 ## 💡 Programmatic Usage & Services
 
-You can import and use core notification services directly in your backend routes or queue workers:
-
-### Sending Push Notifications (`NotificationService`)
+### In-App Feed & Push (`NotificationService`)
 
 ```typescript
-import { NotificationService } from "@bambsdev/notify";
+// For PostgreSQL:
+import { NotificationService } from "@bambsdev/notify/pg";
+// For D1:
+// import { NotificationService } from "@bambsdev/notify/d1";
+
+const svc = new NotificationService(db, fcm, env.ANALYTICS, webPush);
 
 // Create in-app feed entry and optionally trigger FCM / WebPush push notification
-const notification = await NotificationService.createNotification(db, env, {
+const notification = await svc.create({
   userId: "usr_123456",
   title: "New Order Received!",
   body: "Order #9876 has been paid successfully.",
@@ -222,24 +299,30 @@ const notification = await NotificationService.createNotification(db, env, {
     orderId: "9876",
     action: "open_order_details"
   },
-  withPush: true, // Automatically sends FCM & WebPush to user's registered devices
+  withPush: true, // Automatically sends push to user's registered devices
 });
 ```
 
 ### Direct Push Messaging (`FCMService` & `WebPushService`)
 
+Shared across all database stacks:
+
 ```typescript
 import { FCMService, WebPushService } from "@bambsdev/notify";
 
 // Direct FCM message
-const fcm = new FCMService(env);
-await fcm.sendToUser(db, "usr_123456", {
+const fcm = new FCMService(env.KV, env.FCM_PROJECT_ID, env.FCM_SERVICE_ACCOUNT_KEY);
+await fcm.sendToTokens(["device-token-1"], {
   title: "Special Discount",
   body: "Get 20% off today!",
 });
 
 // Direct WebPush payload delivery via VAPID
-const webpush = new WebPushService(env);
+const webpush = new WebPushService(
+  env.VAPID_PUBLIC_KEY, 
+  env.VAPID_PRIVATE_KEY, 
+  env.VAPID_SUBJECT
+);
 await webpush.sendNotification(
   {
     endpoint: "https://updates.push.services.mozilla.com/wpush/v2/...",
@@ -248,7 +331,7 @@ await webpush.sendNotification(
       auth: "5EK..."
     }
   },
-  JSON.stringify({ title: "Web Notification", body: "Hello WebPush!" })
+  { title: "Web Notification", body: "Hello WebPush!" }
 );
 ```
 
@@ -256,21 +339,35 @@ await webpush.sendNotification(
 
 ## 🧹 Automated Cleanup (Cron Job)
 
-Schedule daily execution to automatically drop expired notifications and maintain optimal database size:
+Schedule daily execution to automatically drop expired notifications:
 
+### PostgreSQL (`@bambsdev/notify/pg`)
 ```typescript
-import { cleanupExpiredNotifications } from "@bambsdev/notify";
+import { cleanupExpiredNotifications } from "@bambsdev/notify/pg";
 
 export default {
-  async fetch(req: Request, env: Env, ctx: ExecutionContext) {
-    return app.fetch(req, env, ctx);
-  },
-
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
-    if (event.cron === "0 2 * * *") { // Daily at 02:00 UTC
+    if (event.cron === "0 2 * * *") {
       ctx.waitUntil(
         cleanupExpiredNotifications(env.HYPERDRIVE.connectionString, {
-          deleteExpiredAfterDays: 30, // Deletes read/expired notifications older than 30 days
+          deleteExpiredAfterDays: 30,
+        })
+      );
+    }
+  }
+};
+```
+
+### Cloudflare D1 (`@bambsdev/notify/d1`)
+```typescript
+import { cleanupExpiredNotificationsD1 } from "@bambsdev/notify/d1";
+
+export default {
+  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
+    if (event.cron === "0 2 * * *") {
+      ctx.waitUntil(
+        cleanupExpiredNotificationsD1(env.DB, {
+          deleteExpiredAfterDays: 30,
         })
       );
     }
@@ -283,4 +380,3 @@ export default {
 ## 📄 License
 
 [MIT License](LICENSE) © BambsDev / SantriKita Group
-

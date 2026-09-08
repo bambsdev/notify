@@ -1,41 +1,50 @@
 // src/index.ts
 //
-// Barrel export — @bambsdev/notify
-// Consumer apps import everything from this single entry point.
+// Root export — @bambsdev/notify
+//
+// ⚠️ BREAKING CHANGE in v1.0.0:
+// Database-specific implementations (routes, middleware, schemas, NotificationService)
+// must be explicitly imported from either:
+//   - "@bambsdev/notify/pg" (for PostgreSQL)
+//   - "@bambsdev/notify/d1" (for Cloudflare D1 / SQLite)
 
-// ── Routes ────────────────────────────────────────────────────────────────────
-export { notifyRoutes } from "./routes/notification.routes";
-export { deviceTokenRoutes } from "./routes/device-token.routes";
-
-// ── Middleware ─────────────────────────────────────────────────────────────────
-export { dbMiddleware } from "./db/client";
-export { customLogger, getLogger } from "./utils/logger";
-
-// ── Services (reusable untuk consumer app) ────────────────────────────────────
+// ── Shared Services ───────────────────────────────────────────────────────────
 export { FCMService } from "./services/fcm.service";
+export { WebPushService } from "./services/webpush.service";
 export {
   NotificationService,
-  cleanupExpiredNotifications,
+  BaseNotificationService,
 } from "./services/notification.service";
+export {
+  cleanupExpiredNotifications,
+  cleanupExpiredNotificationsD1,
+} from "./services/cleanup.service";
 
-// ── DB Schema (consumer needs this for drizzle migrations) ────────────────────
-export { deviceTokens, notifications, schema } from "./db/schema";
-export { createDb } from "./db/client";
-export type { DB } from "./db/client";
+// ── Shared Utils ──────────────────────────────────────────────────────────────
+export { customLogger, getLogger } from "./utils/logger";
+export { logAnalytics, type NotifyAnalyticsEvent } from "./utils/analytics";
+export { fail, type AppError } from "./utils/error";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 export type {
-  NotifyLogger,
+  PgDB,
+  D1DB,
+  AnyNotifyDB,
+  DB,
+  SharedNotifyBindings,
+  PgBindings,
+  D1Bindings,
   NotifyBindings,
+  PgVariables,
+  D1Variables,
   NotifyVariables,
+  NotifyLogger,
   SendPushOptions,
   SendPushResult,
   CreateNotificationOptions,
   FCMPayload,
   FCMSendResult,
   FCMBatchResult,
+  WebPushSubscription,
+  ServiceAccountKey,
 } from "./types";
-
-// ── Utils ─────────────────────────────────────────────────────────────────────
-export { logAnalytics, type NotifyAnalyticsEvent } from "./utils/analytics";
-export { fail, type AppError } from "./utils/error";

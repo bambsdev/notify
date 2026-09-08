@@ -28,6 +28,8 @@ export function logAnalytics(
   analytics: AnalyticsEngineDataset,
   options: AnalyticsLogOptions,
 ): void {
+  if (!analytics || typeof analytics.writeDataPoint !== "function") return;
+
   const blobs: string[] = [options.event];
 
   if (options.userId) {

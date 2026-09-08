@@ -1,33 +1,44 @@
 // src/services/notification.service.ts
 //
 // NotificationService — CRUD in-app notifications + FCM push integration.
+// Supports both PostgreSQL and Cloudflare D1 (SQLite).
 
 import {
   eq,
   and,
   lt,
+  gt,
   or,
   desc,
-  sql,
   isNull,
   isNotNull,
+  inArray,
+  count,
 } from "drizzle-orm";
-import { Client } from "pg";
-import { drizzle } from "drizzle-orm/node-postgres";
-import { deviceTokens, notifications, schema } from "../db/schema";
+import * as pgSchema from "../db/pg/schema";
 import type { FCMService } from "./fcm.service";
 import type { WebPushService } from "./webpush.service";
-import type { DB } from "../db/client";
-import type { CreateNotificationOptions, NotifyLogger } from "../types";
-import { logAnalytics, type NotifyAnalyticsEvent } from "../utils/analytics";
+import type { CreateNotificationOptions } from "../types";
+import { logAnalytics } from "../utils/analytics";
 
-export class NotificationService {
+export interface NotifyTables {
+  deviceTokens: any;
+  notifications: any;
+}
+
+export class NotificationService<TDB = any> {
+  protected tables: NotifyTables;
+
   constructor(
-    private db: DB,
-    private fcm: FCMService,
-    private analytics: AnalyticsEngineDataset,
-    private webPush?: WebPushService,
-  ) {}
+    protected db: TDB,
+    protected fcm?: FCMService,
+    protected analytics?: AnalyticsEngineDataset,
+    protected webPush?: WebPushService,
+    tables?: NotifyTables,
+    protected dialect: "pg" | "d1" = "pg",
+  ) {
+    this.tables = tables ?? pgSchema;
+  }
 
   /**
    * Buat in-app notification.
@@ -36,33 +47,37 @@ export class NotificationService {
    */
   async create(options: CreateNotificationOptions) {
     // 1. Insert notifikasi ke DB
-    const [notification] = await this.db
-      .insert(notifications)
+    const insertQuery = (this.db as any)
+      .insert(this.tables.notifications)
       .values({
         userId: options.userId,
         title: options.title,
         body: options.body,
-        imageUrl: options.imageUrl ?? null,
         data: options.data ?? null,
         expiresAt: options.expiresAt ?? null,
-      })
-      .returning();
+      });
 
-    logAnalytics(this.analytics, {
-      event: "notification_created",
-      userId: options.userId,
-    });
+    const [notification] = typeof insertQuery.returning === "function"
+      ? await insertQuery.returning()
+      : await insertQuery;
+
+    if (this.analytics) {
+      logAnalytics(this.analytics, {
+        event: "notification_created",
+        userId: options.userId,
+      });
+    }
 
     // 2. Jika withPush = true, kirim FCM / Web Push ke semua device user
     if (options.withPush) {
-      const devices = await this.db
+      const devices = await (this.db as any)
         .select({
-          token: deviceTokens.token,
-          provider: deviceTokens.provider,
-          subscriptionKeys: deviceTokens.subscriptionKeys,
+          token: this.tables.deviceTokens.token,
+          provider: this.tables.deviceTokens.provider,
+          subscriptionKeys: this.tables.deviceTokens.subscriptionKeys,
         })
-        .from(deviceTokens)
-        .where(eq(deviceTokens.userId, options.userId));
+        .from(this.tables.deviceTokens)
+        .where(eq(this.tables.deviceTokens.userId, options.userId));
 
       if (devices.length > 0) {
         const fcmTokens: string[] = [];
@@ -72,14 +87,21 @@ export class NotificationService {
         }> = [];
 
         for (const d of devices) {
+          let keys = d.subscriptionKeys;
+          if (typeof keys === "string") {
+            try {
+              keys = JSON.parse(keys);
+            } catch {}
+          }
+
           if (
             d.provider === "webpush" &&
-            d.subscriptionKeys?.p256dh &&
-            d.subscriptionKeys?.auth
+            keys?.p256dh &&
+            keys?.auth
           ) {
             webpushDevices.push({
               endpoint: d.token,
-              keys: d.subscriptionKeys,
+              keys,
             });
           } else {
             fcmTokens.push(d.token);
@@ -89,7 +111,7 @@ export class NotificationService {
         const invalidTokensToPrune: string[] = [];
 
         // FCM Push
-        if (fcmTokens.length > 0) {
+        if (fcmTokens.length > 0 && this.fcm) {
           const result = await this.fcm.sendToTokens(fcmTokens, {
             title: options.title,
             body: options.body,
@@ -97,7 +119,7 @@ export class NotificationService {
             data: options.data,
           });
 
-          if (result.successCount > 0) {
+          if (this.analytics && result.successCount > 0) {
             logAnalytics(this.analytics, {
               event: "push_sent",
               userId: options.userId,
@@ -105,7 +127,7 @@ export class NotificationService {
             });
           }
 
-          if (result.failureCount > 0) {
+          if (this.analytics && result.failureCount > 0) {
             logAnalytics(this.analytics, {
               event: "push_failed",
               userId: options.userId,
@@ -145,7 +167,7 @@ export class NotificationService {
             }
           });
 
-          if (wpSuccess > 0) {
+          if (this.analytics && wpSuccess > 0) {
             logAnalytics(this.analytics, {
               event: "push_sent",
               userId: options.userId,
@@ -153,7 +175,7 @@ export class NotificationService {
             });
           }
 
-          if (wpFailure > 0) {
+          if (this.analytics && wpFailure > 0) {
             logAnalytics(this.analytics, {
               event: "push_failed",
               userId: options.userId,
@@ -175,7 +197,7 @@ export class NotificationService {
   /**
    * Ambil daftar notifikasi user dengan cursor-based pagination.
    * Filter: isRead, exclude expired.
-   * Default: 20 item, urut createdAt DESC.
+   * Default: 20 item, urut createdAt DESC, id DESC.
    */
   async list(
     userId: string,
@@ -187,38 +209,52 @@ export class NotificationService {
   ) {
     const limit = Math.min(opts?.limit ?? 20, 50);
     const conditions = [
-      eq(notifications.userId, userId),
+      eq(this.tables.notifications.userId, userId),
       // Exclude expired notifications
       or(
-        isNull(notifications.expiresAt),
-        sql`${notifications.expiresAt} > NOW()`,
+        isNull(this.tables.notifications.expiresAt),
+        gt(this.tables.notifications.expiresAt, new Date()),
       ),
     ];
 
     if (opts?.onlyUnread) {
-      conditions.push(eq(notifications.isRead, false));
+      conditions.push(eq(this.tables.notifications.isRead, false));
     }
 
-    // Cursor-based: ambil notifikasi yang createdAt < cursor notification's createdAt
+    // Compound cursor pagination: (createdAt, id) < (cursor.createdAt, cursor.id)
     if (opts?.cursor) {
-      const cursorNotif = await this.db
-        .select({ createdAt: notifications.createdAt })
-        .from(notifications)
-        .where(eq(notifications.id, opts.cursor))
+      const cursorNotif = await (this.db as any)
+        .select({
+          id: this.tables.notifications.id,
+          createdAt: this.tables.notifications.createdAt,
+        })
+        .from(this.tables.notifications)
+        .where(eq(this.tables.notifications.id, opts.cursor))
         .limit(1);
 
       if (cursorNotif.length > 0) {
+        const cDate = cursorNotif[0].createdAt;
+        const cId = cursorNotif[0].id;
         conditions.push(
-          lt(notifications.createdAt, cursorNotif[0].createdAt),
+          or(
+            lt(this.tables.notifications.createdAt, cDate),
+            and(
+              eq(this.tables.notifications.createdAt, cDate),
+              lt(this.tables.notifications.id, cId),
+            ),
+          )!,
         );
       }
     }
 
-    const items = await this.db
+    const items = await (this.db as any)
       .select()
-      .from(notifications)
+      .from(this.tables.notifications)
       .where(and(...conditions))
-      .orderBy(desc(notifications.createdAt))
+      .orderBy(
+        desc(this.tables.notifications.createdAt),
+        desc(this.tables.notifications.id),
+      )
       .limit(limit + 1); // +1 untuk cek hasMore
 
     const hasMore = items.length > limit;
@@ -235,10 +271,13 @@ export class NotificationService {
    * Validasi: notifikasi harus milik userId yang tepat.
    */
   async markRead(notificationId: string, userId: string): Promise<void> {
-    const [existing] = await this.db
-      .select({ id: notifications.id, userId: notifications.userId })
-      .from(notifications)
-      .where(eq(notifications.id, notificationId))
+    const [existing] = await (this.db as any)
+      .select({
+        id: this.tables.notifications.id,
+        userId: this.tables.notifications.userId,
+      })
+      .from(this.tables.notifications)
+      .where(eq(this.tables.notifications.id, notificationId))
       .limit(1);
 
     if (!existing) {
@@ -255,38 +294,48 @@ export class NotificationService {
       );
     }
 
-    await this.db
-      .update(notifications)
+    await (this.db as any)
+      .update(this.tables.notifications)
       .set({ isRead: true, readAt: new Date() })
-      .where(eq(notifications.id, notificationId));
+      .where(eq(this.tables.notifications.id, notificationId));
 
-    logAnalytics(this.analytics, {
-      event: "notification_read",
-      userId,
-    });
+    if (this.analytics) {
+      logAnalytics(this.analytics, {
+        event: "notification_read",
+        userId,
+      });
+    }
   }
 
   /**
    * Tandai semua notifikasi user sebagai sudah dibaca.
    */
   async markAllRead(userId: string): Promise<{ count: number }> {
-    const result = await this.db
-      .update(notifications)
+    const query = (this.db as any)
+      .update(this.tables.notifications)
       .set({ isRead: true, readAt: new Date() })
       .where(
         and(
-          eq(notifications.userId, userId),
-          eq(notifications.isRead, false),
+          eq(this.tables.notifications.userId, userId),
+          eq(this.tables.notifications.isRead, false),
         ),
       );
 
-    const count = result.rowCount ?? 0;
+    const result = typeof query.returning === "function"
+      ? await query.returning({ id: this.tables.notifications.id })
+      : await query;
 
-    logAnalytics(this.analytics, {
-      event: "notifications_read_all",
-      userId,
-      doubles: [count],
-    });
+    const count = Array.isArray(result)
+      ? result.length
+      : (result?.rowCount ?? 0);
+
+    if (this.analytics) {
+      logAnalytics(this.analytics, {
+        event: "notifications_read_all",
+        userId,
+        doubles: [count],
+      });
+    }
 
     return { count };
   }
@@ -296,109 +345,78 @@ export class NotificationService {
    * Digunakan untuk badge counter di UI.
    */
   async unreadCount(userId: string): Promise<number> {
-    const [result] = await this.db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(notifications)
+    const [result] = await (this.db as any)
+      .select({ count: count() })
+      .from(this.tables.notifications)
       .where(
         and(
-          eq(notifications.userId, userId),
-          eq(notifications.isRead, false),
+          eq(this.tables.notifications.userId, userId),
+          eq(this.tables.notifications.isRead, false),
           or(
-            isNull(notifications.expiresAt),
-            sql`${notifications.expiresAt} > NOW()`,
+            isNull(this.tables.notifications.expiresAt),
+            gt(this.tables.notifications.expiresAt, new Date()),
           ),
         ),
       );
 
-    return result?.count ?? 0;
+    return Number(result?.count ?? 0);
   }
 
   /**
-   * Hapus notifikasi yang sudah expired atau lebih tua dari N hari.
+   * Hapus notifikasi yang sudah expired atau lebih tua dari N hari (jika tanpa expiresAt).
    * Dipanggil oleh cron job harian.
    */
   async deleteExpired(olderThanDays: number = 30): Promise<{ deleted: number }> {
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - olderThanDays);
 
-    const result = await this.db
-      .delete(notifications)
+    const query = (this.db as any)
+      .delete(this.tables.notifications)
       .where(
         or(
           // Notifikasi yang expiresAt sudah lewat
           and(
-            isNotNull(notifications.expiresAt),
-            lt(notifications.expiresAt, new Date()),
+            isNotNull(this.tables.notifications.expiresAt),
+            lt(this.tables.notifications.expiresAt, new Date()),
           ),
-          // Notifikasi yang lebih tua dari N hari
-          lt(notifications.createdAt, cutoffDate),
+          // Notifikasi tanpa expiresAt (default) yang lebih tua dari N hari
+          and(
+            isNull(this.tables.notifications.expiresAt),
+            lt(this.tables.notifications.createdAt, cutoffDate),
+          ),
         ),
       );
 
-    const deleted = result.rowCount ?? 0;
+    const result = typeof query.returning === "function"
+      ? await query.returning({ id: this.tables.notifications.id })
+      : await query;
 
-    logAnalytics(this.analytics, {
-      event: "cleanup_expired",
-      doubles: [deleted],
-    });
+    const deleted = Array.isArray(result)
+      ? result.length
+      : (result?.rowCount ?? 0);
+
+    if (this.analytics) {
+      logAnalytics(this.analytics, {
+        event: "cleanup_expired",
+        doubles: [deleted],
+      });
+    }
 
     return { deleted };
   }
 
   /**
-   * Hapus device token yang sudah tidak valid dari DB.
-   * Dipanggil setelah FCMService return failedTokens.
+   * Hapus device token yang sudah tidak valid dari DB dalam 1 batch query.
+   * Dipanggil setelah FCMService/WebPushService return failedTokens.
    */
   async pruneInvalidTokens(tokens: string[]): Promise<void> {
-    if (tokens.length === 0) return;
+    if (!tokens || tokens.length === 0) return;
 
-    for (const token of tokens) {
-      await this.db
-        .delete(deviceTokens)
-        .where(eq(deviceTokens.token, token));
-    }
+    await (this.db as any)
+      .delete(this.tables.deviceTokens)
+      .where(inArray(this.tables.deviceTokens.token, tokens));
   }
 }
 
-// ── Standalone Cleanup Function (untuk cron) ──────────────────────────────────
-
-/**
- * Helper untuk menghapus notifikasi yang sudah kedaluwarsa via Scheduled Worker / Cron Job.
- */
-export async function cleanupExpiredNotifications(
-  connectionString: string,
-  opts?: { deleteExpiredAfterDays?: number; logger?: NotifyLogger },
-): Promise<void> {
-  const client = new Client({ connectionString });
-
-  try {
-    await client.connect();
-    const db = drizzle(client, { schema, logger: false });
-    const olderThanDays = opts?.deleteExpiredAfterDays ?? 30;
-
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - olderThanDays);
-
-    const result = await db
-      .delete(notifications)
-      .where(
-        or(
-          and(
-            isNotNull(notifications.expiresAt),
-            lt(notifications.expiresAt, new Date()),
-          ),
-          lt(notifications.createdAt, cutoffDate),
-        ),
-      );
-
-    opts?.logger?.info?.(
-      `[cron] Expired notifications cleaned up. Rows affected: ${result.rowCount}`,
-      { event: "cron_cleanup_notifications_success", rowCount: result.rowCount },
-    );
-  } catch (error) {
-    opts?.logger?.error?.("[cron] Error cleaning up expired notifications", { event: "cron_cleanup_notifications_failed" }, error);
-    throw error;
-  } finally {
-    await client.end().catch(() => {});
-  }
-}
+export { NotificationService as BaseNotificationService };
+export { cleanupExpiredNotifications } from "./cleanup.service";

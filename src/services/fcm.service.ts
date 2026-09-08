@@ -17,21 +17,30 @@ import type {
 export class FCMService {
   private readonly kv: KVNamespace;
   private readonly projectId: string;
-  private readonly serviceAccountKey: ServiceAccountKey;
+  private readonly serviceAccountKey?: ServiceAccountKey;
   private readonly KV_TOKEN_KEY = "fcm:oauth_token";
   private readonly FCM_SCOPE =
     "https://www.googleapis.com/auth/firebase.messaging";
   private readonly FCM_URL: string;
 
   constructor(
-    kv: KVNamespace,
-    projectId: string,
-    serviceAccountKeyJson: string,
+    kv?: KVNamespace,
+    projectId?: string,
+    serviceAccountKeyJson?: string,
   ) {
-    this.kv = kv;
-    this.projectId = projectId;
-    this.serviceAccountKey = JSON.parse(serviceAccountKeyJson);
-    this.FCM_URL = `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`;
+    this.kv = kv!;
+    this.projectId = projectId ?? "";
+    if (serviceAccountKeyJson) {
+      try {
+        this.serviceAccountKey =
+          typeof serviceAccountKeyJson === "string"
+            ? JSON.parse(serviceAccountKeyJson)
+            : serviceAccountKeyJson;
+      } catch {
+        // Handled gracefully when getAccessToken() is called
+      }
+    }
+    this.FCM_URL = `https://fcm.googleapis.com/v1/projects/${this.projectId}/messages:send`;
   }
 
   // ── OAuth2 Token Management ─────────────────────────────────────────────────
@@ -42,8 +51,15 @@ export class FCMService {
    * 2. Jika tidak ada atau expired → generate JWT → exchange ke Google → simpan ke KV
    */
   async getAccessToken(): Promise<string> {
+    if (!this.serviceAccountKey || !this.serviceAccountKey.private_key) {
+      throw new Error("FCM service account key is missing or invalid JSON");
+    }
+
     // 1. Check KV cache
-    const cached = await this.kv.get(this.KV_TOKEN_KEY);
+    let cached: string | null = null;
+    if (this.kv && typeof this.kv.get === "function") {
+      cached = await this.kv.get(this.KV_TOKEN_KEY);
+    }
     if (cached) return cached;
 
     // 2. Generate JWT
@@ -53,9 +69,11 @@ export class FCMService {
     const accessToken = await this.exchangeJWTForToken(jwt);
 
     // 4. Cache ke KV dengan TTL 55 menit (token valid 60 menit, margin 5 menit)
-    await this.kv.put(this.KV_TOKEN_KEY, accessToken, {
-      expirationTtl: 55 * 60,
-    });
+    if (this.kv && typeof this.kv.put === "function") {
+      await this.kv.put(this.KV_TOKEN_KEY, accessToken, {
+        expirationTtl: 55 * 60,
+      });
+    }
 
     return accessToken;
   }
@@ -65,6 +83,10 @@ export class FCMService {
    * Menggunakan Web Crypto API (tersedia di CF Workers).
    */
   private async generateJWT(): Promise<string> {
+    if (!this.serviceAccountKey?.private_key) {
+      throw new Error("FCM private_key is required");
+    }
+
     // Import RSA private key dari service account
     const privateKey = await crypto.subtle.importKey(
       "pkcs8",
@@ -128,8 +150,12 @@ export class FCMService {
    * Kirim push notification ke satu FCM token.
    * Jika response 404 (token tidak valid), return { success: false, invalidToken: true }
    */
-  async sendToToken(token: string, payload: FCMPayload): Promise<FCMSendResult> {
-    const accessToken = await this.getAccessToken();
+  async sendToToken(
+    token: string,
+    payload: FCMPayload,
+    accessTokenOverride?: string,
+  ): Promise<FCMSendResult> {
+    const accessToken = accessTokenOverride ?? (await this.getAccessToken());
 
     const body: Record<string, any> = {
       message: {
@@ -163,24 +189,34 @@ export class FCMService {
       return { success: true, messageId: result.name };
     }
 
+    const responseText = await response.text().catch(() => "Unknown error");
+    let errorBody: any = {};
+    try {
+      errorBody = JSON.parse(responseText);
+    } catch {}
+
     // Token tidak valid / expired — harus dihapus dari DB
     if (response.status === 404 || response.status === 400) {
-      const errorBody = (await response.json().catch(() => ({}))) as {
-        error?: { details?: Array<{ errorCode?: string }> };
-      };
-      const errorCode = errorBody?.error?.details?.[0]?.errorCode;
+      const errorCode =
+        errorBody?.error?.details?.[0]?.errorCode || errorBody?.error?.status;
 
       if (
         errorCode === "UNREGISTERED" ||
         errorCode === "INVALID_ARGUMENT" ||
         response.status === 404
       ) {
-        return { success: false, invalidToken: true, error: errorCode };
+        return {
+          success: false,
+          invalidToken: true,
+          error: errorCode || `FCM error ${response.status}`,
+        };
       }
     }
 
-    const errorText = await response.text().catch(() => "Unknown error");
-    return { success: false, error: `FCM error ${response.status}: ${errorText}` };
+    return {
+      success: false,
+      error: `FCM error ${response.status}: ${responseText}`,
+    };
   }
 
   /**
@@ -191,8 +227,23 @@ export class FCMService {
     tokens: string[],
     payload: FCMPayload,
   ): Promise<FCMBatchResult> {
+    if (tokens.length === 0) {
+      return { successCount: 0, failureCount: 0, failedTokens: [] };
+    }
+
+    let accessToken: string | undefined;
+    try {
+      accessToken = await this.getAccessToken();
+    } catch (err: any) {
+      return {
+        successCount: 0,
+        failureCount: tokens.length,
+        failedTokens: [],
+      };
+    }
+
     const results = await Promise.allSettled(
-      tokens.map((token) => this.sendToToken(token, payload)),
+      tokens.map((token) => this.sendToToken(token, payload, accessToken)),
     );
 
     let successCount = 0;
@@ -204,7 +255,6 @@ export class FCMService {
       } else if (result.status === "fulfilled" && result.value.invalidToken) {
         failedTokens.push(tokens[index]);
       }
-      // Token yang error 500 dari FCM → jangan hapus, coba lagi nanti
     });
 
     return {
@@ -269,6 +319,7 @@ export class FCMService {
    */
   private pemToArrayBuffer(pem: string): ArrayBuffer {
     const b64 = pem
+      .replace(/\\n/g, "\n")
       .replace(/-----BEGIN PRIVATE KEY-----/g, "")
       .replace(/-----END PRIVATE KEY-----/g, "")
       .replace(/\s/g, "");

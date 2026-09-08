@@ -2,14 +2,23 @@
 //
 // All public types for @bambsdev/notify.
 
-import type { DB } from "./db/client";
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
+import type { DrizzleD1Database } from "drizzle-orm/d1";
+import type * as pgSchema from "./db/pg/schema";
+import type * as d1Schema from "./db/d1/schema";
+
+// ── Database Types ────────────────────────────────────────────────────────────
+
+export type PgDB = NodePgDatabase<typeof pgSchema>;
+export type D1DB = DrizzleD1Database<typeof d1Schema>;
+export type AnyNotifyDB = PgDB | D1DB;
+
+// Backward-compatibility alias
+export type DB = PgDB;
 
 // ── Cloudflare Worker Bindings ────────────────────────────────────────────────
 
-export interface NotifyBindings {
-  // Hyperdrive — connection pool ke Neon PostgreSQL
-  HYPERDRIVE: Hyperdrive;
-
+export interface SharedNotifyBindings {
   // KV — menyimpan FCM OAuth2 access token (TTL-based caching)
   KV: KVNamespace;
 
@@ -24,10 +33,23 @@ export interface NotifyBindings {
   VAPID_PUBLIC_KEY: string;
   VAPID_PRIVATE_KEY: string;
   VAPID_SUBJECT: string; // mailto: format (e.g. mailto:admin@example.com)
+}
+
+export interface PgBindings extends SharedNotifyBindings {
+  // Hyperdrive — connection pool ke Neon PostgreSQL
+  HYPERDRIVE?: Hyperdrive;
 
   // Local dev bypass
   LOCAL_DATABASE_URL?: string;
 }
+
+export interface D1Bindings extends SharedNotifyBindings {
+  // Cloudflare D1 Database binding
+  DB: D1Database;
+}
+
+// Backward-compatibility / generic union type
+export type NotifyBindings = PgBindings & Partial<D1Bindings>;
 
 // ── Web Push (VAPID) ──────────────────────────────────────────────────────────
 
@@ -45,16 +67,25 @@ export interface NotifyLogger {
   debug?: (message: string, metadata?: Record<string, unknown>) => void;
   info?: (message: string, metadata?: Record<string, unknown>) => void;
   warn?: (message: string, metadata?: Record<string, unknown>) => void;
-  error?: (message: string, metadata?: Record<string, unknown>, error?: Error | unknown) => void;
+  error?: (message: string, metadata?: Record<string, unknown>, error?: unknown) => void;
 }
 
 // ── Hono Context Variables (injected per-request) ─────────────────────────────
 
-export interface NotifyVariables {
-  db: DB;
-  userId: string; // Di-inject oleh authMiddleware dari @bambsdev/auth
+export interface PgVariables {
+  db: PgDB;
+  userId: string; // Di-inject oleh authMiddleware
   logger?: NotifyLogger;
 }
+
+export interface D1Variables {
+  db: D1DB;
+  userId: string; // Di-inject oleh authMiddleware
+  logger?: NotifyLogger;
+}
+
+// Backward-compatibility alias
+export type NotifyVariables = PgVariables;
 
 // ── FCM Push ──────────────────────────────────────────────────────────────────
 

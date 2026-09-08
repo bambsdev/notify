@@ -161,8 +161,8 @@ describe("notify/NotificationService: create", () => {
     expect(db.delete.mock.calls.length).toBeGreaterThan(0);
   });
 
-  test("includes optional fields (imageUrl, data, expiresAt) in insert", async () => {
-    let capturedValues: any = null;
+  test("includes optional fields (data, expiresAt) in insert", async () => {
+    let capturedValues: any;
     const db = createMockDb({
       insert: mock(() => ({
         values: mock((vals: any) => {
@@ -178,12 +178,10 @@ describe("notify/NotificationService: create", () => {
       userId: "user-1",
       title: "T",
       body: "B",
-      imageUrl: "https://example.com/img.jpg",
       data: { action: "open" },
       expiresAt,
     });
 
-    expect(capturedValues.imageUrl).toBe("https://example.com/img.jpg");
     expect(capturedValues.data).toEqual({ action: "open" });
     expect(capturedValues.expiresAt).toEqual(expiresAt);
   });
@@ -342,22 +340,13 @@ describe("notify/NotificationService: pruneInvalidTokens", () => {
     expect(db.delete.mock.calls.length).toBe(0);
   });
 
-  test("calls db.delete for each invalid token", async () => {
+  test("calls db.delete with inArray for invalid tokens in a single batch query", async () => {
     const db = createMockDb();
     const svc = new NotificationService(db, createMockFcm(), createMockAnalytics());
 
     await svc.pruneInvalidTokens(["token-a", "token-b", "token-c"]);
 
-    expect(db.delete.mock.calls.length).toBe(3);
-  });
-
-  test("calls db.delete once per token (not batch)", async () => {
-    const db = createMockDb();
-    const svc = new NotificationService(db, createMockFcm(), createMockAnalytics());
-
-    await svc.pruneInvalidTokens(["tok-1", "tok-2"]);
-
-    expect(db.delete.mock.calls.length).toBe(2);
+    expect(db.delete.mock.calls.length).toBe(1);
   });
 });
 

@@ -17,8 +17,8 @@ export const RegisterDeviceTokenBodySchema = z
     provider: z.enum(["fcm", "webpush"]).default("fcm").openapi({ example: "fcm" }),
     keys: z
       .object({
-        p256dh: z.string(),
-        auth: z.string(),
+        p256dh: z.string().min(1, "p256dh wajib diisi"),
+        auth: z.string().min(1, "auth wajib diisi"),
       })
       .optional()
       .openapi({
@@ -28,6 +28,18 @@ export const RegisterDeviceTokenBodySchema = z
         },
       }),
   })
+  .refine(
+    (data) => {
+      if (data.provider === "webpush") {
+        return !!data.keys?.p256dh && !!data.keys?.auth;
+      }
+      return true;
+    },
+    {
+      message: "keys (p256dh dan auth) wajib diisi untuk provider webpush",
+      path: ["keys"],
+    },
+  )
   .openapi("RegisterDeviceTokenBody");
 
 export const DeleteDeviceTokenBodySchema = z
@@ -64,11 +76,9 @@ export const NotificationSchema = z
     userId: z.string(),
     title: z.string(),
     body: z.string(),
-    imageUrl: z.string().nullable(),
     data: z.record(z.string(), z.string()).nullable(),
     isRead: z.boolean(),
     readAt: z.string().datetime().nullable(),
-    fcmMessageId: z.string().nullable(),
     createdAt: z.string().datetime(),
     expiresAt: z.string().datetime().nullable(),
   })

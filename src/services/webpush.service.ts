@@ -11,9 +11,9 @@ export class WebPushService {
   private vapidSubject: string;
 
   constructor(vapidPublicKey: string, vapidPrivateKey: string, vapidSubject: string) {
-    this.vapidPublicKey = vapidPublicKey;
-    this.vapidPrivateKey = vapidPrivateKey;
-    this.vapidSubject = vapidSubject;
+    this.vapidPublicKey = this.sanitizeVapidKey(vapidPublicKey);
+    this.vapidPrivateKey = this.sanitizeVapidKey(vapidPrivateKey);
+    this.vapidSubject = (vapidSubject || "").trim().replace(/^["']|["']$/g, "").trim();
   }
 
   /**
@@ -23,17 +23,42 @@ export class WebPushService {
     sub: WebPushSubscription,
     payload: FCMPayload,
   ): Promise<FCMSendResult> {
+    if (!sub.keys?.p256dh || !sub.keys?.auth) {
+      return {
+        success: false,
+        invalidToken: true,
+        error: "Missing WebPush subscription keys (p256dh, auth)",
+      };
+    }
+
+    let jwt: string;
     try {
       const endpointUrl = new URL(sub.endpoint);
-      const origin = endpointUrl.origin;
+      jwt = await this.createVapidJwt(endpointUrl.origin);
+    } catch (err: any) {
+      return {
+        success: false,
+        error: `VAPID configuration error: ${err.message || err}`,
+      };
+    }
 
-      const jwt = await this.createVapidJwt(origin);
-      const encryptedPayload = await this.encryptPayload(
+    let encryptedPayload: ArrayBuffer;
+    try {
+      encryptedPayload = await this.encryptPayload(
         JSON.stringify(payload),
         sub.keys.p256dh,
         sub.keys.auth,
       );
+    } catch (err: any) {
+      // Client subscription key is invalid / unparseable
+      return {
+        success: false,
+        invalidToken: true,
+        error: `Invalid subscription keys: ${err.message || err}`,
+      };
+    }
 
+    try {
       const response = await fetch(sub.endpoint, {
         method: "POST",
         headers: {
@@ -58,6 +83,16 @@ export class WebPushService {
       }
 
       const errorText = await response.text().catch(() => "Unknown error");
+
+      // 403 dari FCM = subscription dibuat dengan VAPID key berbeda → token tidak valid
+      if (response.status === 403) {
+        return {
+          success: false,
+          invalidToken: true,
+          error: `WebPush error 403: ${errorText}`,
+        };
+      }
+
       return {
         success: false,
         error: `WebPush error ${response.status}: ${errorText}`,
@@ -100,6 +135,17 @@ export class WebPushService {
   private async importVapidPrivateKey(): Promise<CryptoKey> {
     const privKeyBytes = this.urlBase64ToUint8Array(this.vapidPrivateKey);
     const pubKeyBytes = this.urlBase64ToUint8Array(this.vapidPublicKey);
+
+    if (privKeyBytes.length !== 32) {
+      throw new Error(
+        `VAPID Private Key tidak valid (ditemukan ${privKeyBytes.length} bytes, harus 32 bytes / 43 karakter base64url). Periksa kembali nilai VAPID_PRIVATE_KEY.`
+      );
+    }
+    if (pubKeyBytes.length !== 65) {
+      throw new Error(
+        `VAPID Public Key tidak valid (ditemukan ${pubKeyBytes.length} bytes, harus 65 bytes / ~87 karakter base64url). Periksa kembali nilai VAPID_PUBLIC_KEY.`
+      );
+    }
 
     // Uncompressed P-256 EC public key is 65 bytes starting with 0x04
     const x = this.base64urlBuffer(pubKeyBytes.slice(1, 33));
@@ -167,24 +213,29 @@ export class WebPushService {
     );
     const sharedSecretBytes = new Uint8Array(sharedSecretBuffer);
 
-    // 5. HKDF Derivations
-    // PRK = HKDF-Extract(salt = clientAuth, IKM = sharedSecret)
+    // 5. RFC 8291 Key Derivation (3 langkah wajib)
+    //
+    // Langkah A: PRK = HKDF-Extract(salt=auth_secret, IKM=ecdh_secret)
     const prk = await this.hkdfExtract(clientAuthBytes, sharedSecretBytes);
 
-    // key_info = "WebPush: info\0" + clientPubKey + localPubKey
+    // Langkah B: ikm = HKDF-Expand(PRK, "WebPush: info\0" || ua_public || as_public, 32)
     const infoHeader = new TextEncoder().encode("WebPush: info\0");
     const keyInfo = this.concatBytes(infoHeader, clientPubKeyBytes, localPubKeyBytes);
+    const ikm = await this.hkdfExpand(prk, keyInfo, 32);
 
-    // PRK_key = HKDF-Expand(PRK, key_info, 32)
-    const prkKey = await this.hkdfExpand(prk, keyInfo, 32);
+    // Langkah C: PRK_content = HKDF-Extract(salt=random_salt, IKM=ikm)
+    // ⚠️ LANGKAH INI WAJIB — random salt digunakan di sini, BUKAN di langkah A!
+    // Tanpa langkah ini, Chrome tidak bisa mendekripsi payload (push event tidak ter-trigger).
+    // Referensi: RFC 8291 §3.3 & implementasi web-push npm
+    const prkContent = await this.hkdfExtract(salt, ikm);
 
-    // CEK = HKDF-Expand(PRK_key, "Content-Encoding: aes128gcm\0", 16)
+    // Langkah D: CEK = HKDF-Expand(PRK_content, "Content-Encoding: aes128gcm\0", 16)
     const cekInfo = new TextEncoder().encode("Content-Encoding: aes128gcm\0");
-    const cekBytes = await this.hkdfExpand(prkKey, cekInfo, 16);
+    const cekBytes = await this.hkdfExpand(prkContent, cekInfo, 16);
 
-    // Nonce = HKDF-Expand(PRK_key, "Content-Encoding: nonce\0", 12)
+    // Langkah E: Nonce = HKDF-Expand(PRK_content, "Content-Encoding: nonce\0", 12)
     const nonceInfo = new TextEncoder().encode("Content-Encoding: nonce\0");
-    const nonceBytes = await this.hkdfExpand(prkKey, nonceInfo, 12);
+    const nonceBytes = await this.hkdfExpand(prkContent, nonceInfo, 12);
 
     // 6. AES-GCM Encrypt payload with padding (delimeter \x02 at end)
     const payloadBytes = new TextEncoder().encode(payloadText);
@@ -269,17 +320,43 @@ export class WebPushService {
     return result;
   }
 
-  private urlBase64ToUint8Array(base64String: string): Uint8Array {
-    const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
-    const base64 = (base64String + padding)
-      .replace(/\-/g, "+")
-      .replace(/_/g, "/");
-    const rawData = atob(base64);
-    const outputArray = new Uint8Array(rawData.length);
-    for (let i = 0; i < rawData.length; ++i) {
-      outputArray[i] = rawData.charCodeAt(i);
+  private sanitizeVapidKey(key?: string | null): string {
+    if (!key) return "";
+    let str = String(key).trim();
+    // Jika user menginput string JSON JWK {"kty":"EC","d":"..."}
+    if (str.startsWith("{") && str.endsWith("}")) {
+      try {
+        const parsed = JSON.parse(str);
+        if (parsed.d) return String(parsed.d);
+      } catch {}
     }
-    return outputArray;
+    // Hapus wrapping quotes
+    str = str.replace(/^["']|["']$/g, "").trim();
+    // Hapus seluruh spasi dan newline
+    str = str.replace(/\s+/g, "");
+    // Standardisasi base64 ke base64url
+    str = str.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    // Filter hanya karakter valid base64url
+    str = str.replace(/[^A-Za-z0-9\-_]/g, "");
+    return str;
+  }
+
+  private urlBase64ToUint8Array(base64String: string): Uint8Array {
+    const cleanBase64 = this.sanitizeVapidKey(base64String);
+    const padding = "=".repeat((4 - (cleanBase64.length % 4)) % 4);
+    const base64 = (cleanBase64 + padding)
+      .replace(/-/g, "+")
+      .replace(/_/g, "/");
+    try {
+      const rawData = atob(base64);
+      const outputArray = new Uint8Array(rawData.length);
+      for (let i = 0; i < rawData.length; ++i) {
+        outputArray[i] = rawData.charCodeAt(i);
+      }
+      return outputArray;
+    } catch (err: any) {
+      throw new Error(`Gagal mendekode base64: ${err.message || err}`);
+    }
   }
 
   private base64url(str: string): string {

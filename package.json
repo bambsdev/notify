@@ -1,7 +1,10 @@
 {
   "name": "@bambsdev/notify",
-  "version": "1.0.5",
+  "version": "1.0.0",
   "type": "module",
+  "bin": {
+    "notify-keys": "./dist/cli.js"
+  },
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -14,6 +17,26 @@
       "import": {
         "types": "./dist/index.d.ts",
         "default": "./dist/index.js"
+      }
+    },
+    "./pg": {
+      "require": {
+        "types": "./dist/pg/index.d.cts",
+        "default": "./dist/pg/index.cjs"
+      },
+      "import": {
+        "types": "./dist/pg/index.d.ts",
+        "default": "./dist/pg/index.js"
+      }
+    },
+    "./d1": {
+      "require": {
+        "types": "./dist/d1/index.d.cts",
+        "default": "./dist/d1/index.cjs"
+      },
+      "import": {
+        "types": "./dist/d1/index.d.ts",
+        "default": "./dist/d1/index.js"
       }
     }
   },
@@ -34,16 +57,21 @@
     "drizzle-orm": ">=0.36.0",
     "hono": ">=4.0.0",
     "pg": ">=8.0.0",
-    "zod": ">=4.0.0"
+    "zod": ">=3.23.0"
+  },
+  "peerDependenciesMeta": {
+    "pg": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260702.1",
-    "@hono/zod-openapi": "^1.5.1",
+    "@hono/zod-openapi": "^1.6.1",
     "@types/bun": "latest",
-    "@types/pg": "^8.20.0",
+    "@types/pg": "^8.23.1",
     "drizzle-orm": "^0.45.2",
-    "hono": "^4.12.31",
-    "pg": "^8.22.0",
+    "hono": "^4.13.5",
+    "pg": "^8.23.0",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3",
     "zod": "^4.4.3"

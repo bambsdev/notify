@@ -29,7 +29,7 @@ export const customLogger = (
       c.req.header("X-Forwarded-For") ||
       "unknown";
     const method = c.req.method;
-    const url = new URL(c.req.url).pathname;
+    const url = c.req.path;
     const status = c.res.status;
     const userId = c.get("userId") || undefined;
 
