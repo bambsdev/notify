@@ -294,6 +294,8 @@ const notification = await svc.create({
   userId: "usr_123456",
   title: "New Order Received!",
   body: "Order #9876 has been paid successfully.",
+  icon: "/icon-192x192.png", // WebPush & PWA icon
+  badge: "/badge-96x96.png", // Android status bar / badge icon
   imageUrl: "https://example.com/assets/order.png",
   data: {
     orderId: "9876",
@@ -315,6 +317,8 @@ const fcm = new FCMService(env.KV, env.FCM_PROJECT_ID, env.FCM_SERVICE_ACCOUNT_K
 await fcm.sendToTokens(["device-token-1"], {
   title: "Special Discount",
   body: "Get 20% off today!",
+  icon: "/icon-192x192.png",
+  badge: "/badge-96x96.png",
 });
 
 // Direct WebPush payload delivery via VAPID
@@ -331,7 +335,12 @@ await webpush.sendNotification(
       auth: "5EK..."
     }
   },
-  { title: "Web Notification", body: "Hello WebPush!" }
+  {
+    title: "Web Notification",
+    body: "Hello WebPush!",
+    icon: "/icon-192x192.png",
+    badge: "/badge-96x96.png",
+  }
 );
 ```
 

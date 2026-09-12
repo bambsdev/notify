@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.0.1] - 2026-09-12
+
+### ✨ Added
+- **`icon` and `badge` Support in Push Payloads**:
+  - Added dedicated `WebPushPayload` type with `icon?: string` and `badge?: string` properties.
+  - Extended `FCMPayload`, `SendPushOptions`, and `CreateNotificationOptions` to officially include `icon?: string` and `badge?: string`.
+  - Exported `WebPushPayload` from root (`@bambsdev/notify`), PostgreSQL (`@bambsdev/notify/pg`), and D1 (`@bambsdev/notify/d1`) entrypoints.
+  - Automatically configured FCM HTTP v1 `webpush.notification.icon` and `webpush.notification.badge` when options are provided in `FCMService.sendToToken` and `FCMService.sendToTopic`.
+  - Automatically forwarded `icon` and `badge` to both `FCMService` and `WebPushService` in `NotificationService.create()`.
+- **TDD & Unit Testing**:
+  - Added test suite `tests/webpush.service.test.ts` to verify payload delivery with `icon`, `badge`, and RFC 8291 `aes128gcm` encryption.
+  - Added test suite `tests/fcm.service.test.ts` to verify `webpush.notification.icon` and `badge` inclusion in FCM HTTP v1 requests.
+  - Added test case in `tests/notification.service.test.ts` to assert that `icon` and `badge` are preserved and forwarded correctly across all channels.
+
+---
+
 ## [2.0.0] - 2026-09-08
 
 ### 🚨 BREAKING CHANGES

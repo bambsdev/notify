@@ -46,5 +46,6 @@ export type {
   FCMSendResult,
   FCMBatchResult,
   WebPushSubscription,
+  WebPushPayload,
   ServiceAccountKey,
 } from "./types";

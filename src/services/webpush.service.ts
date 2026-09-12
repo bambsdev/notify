@@ -3,7 +3,7 @@
 // WebPushService — mengelola Native Web Push (VAPID / RFC 8291 aes128gcm).
 // 100% kompatibel dengan Cloudflare Workers (Edge runtime) menggunakan Web Crypto API.
 
-import type { FCMPayload, FCMSendResult, WebPushSubscription } from "../types";
+import type { FCMPayload, FCMSendResult, WebPushPayload, WebPushSubscription } from "../types";
 
 export class WebPushService {
   private vapidPublicKey: string;
@@ -21,7 +21,7 @@ export class WebPushService {
    */
   async sendNotification(
     sub: WebPushSubscription,
-    payload: FCMPayload,
+    payload: WebPushPayload | FCMPayload,
   ): Promise<FCMSendResult> {
     if (!sub.keys?.p256dh || !sub.keys?.auth) {
       return {

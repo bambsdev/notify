@@ -215,6 +215,49 @@ describe("notify/NotificationService: create", () => {
     });
   });
 
+  test("forwards icon and badge to both FCM and WebPush when provided", async () => {
+    const fcm = createMockFcm();
+    const webPush = createMockWebPush();
+    const db = createMockDb({
+      select: mock(() => ({
+        from: mock(() => ({
+          where: mock(async () => [
+            { token: "fcm-token-1", provider: "fcm" },
+            {
+              token: "https://push.endpoint/sub-1",
+              provider: "webpush",
+              subscriptionKeys: { p256dh: "key-1", auth: "auth-1" },
+            },
+          ]),
+        })),
+      })),
+    });
+    const svc = new NotificationService(db, fcm, createMockAnalytics(), webPush);
+
+    await svc.create({
+      userId: "user-1",
+      title: "Pesanan Baru",
+      body: "Buku telah dikirim",
+      icon: "/icon-192x192.png",
+      badge: "/badge-96x96.png",
+      imageUrl: "/cover.jpg",
+      data: { orderId: "123" },
+      withPush: true,
+    });
+
+    expect(fcm.sendToTokens.mock.calls.length).toBe(1);
+    const sentFcmPayload = fcm.sendToTokens.mock.calls[0][1];
+    expect(sentFcmPayload.icon).toBe("/icon-192x192.png");
+    expect(sentFcmPayload.badge).toBe("/badge-96x96.png");
+    expect(sentFcmPayload.imageUrl).toBe("/cover.jpg");
+
+    expect(webPush.sendNotification.mock.calls.length).toBe(1);
+    const sentWebPushPayload = webPush.sendNotification.mock.calls[0][1];
+    expect(sentWebPushPayload.icon).toBe("/icon-192x192.png");
+    expect(sentWebPushPayload.badge).toBe("/badge-96x96.png");
+    expect(sentWebPushPayload.imageUrl).toBe("/cover.jpg");
+  });
+
   test("prunes invalid WebPush token when WebPushService returns invalidToken", async () => {
     const fcm = createMockFcm();
     const webPush = createMockWebPush({ success: false, invalidToken: true });

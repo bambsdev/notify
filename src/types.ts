@@ -61,6 +61,15 @@ export interface WebPushSubscription {
   };
 }
 
+export interface WebPushPayload {
+  title: string;
+  body: string;
+  icon?: string;
+  badge?: string;
+  imageUrl?: string;
+  data?: Record<string, string>;
+}
+
 // ── Logger Interface (Industry Standard Dependency Injection) ─────────────────
 
 export interface NotifyLogger {
@@ -98,6 +107,8 @@ export interface SendPushOptions {
   topic?: string;
   title: string;
   body: string;
+  icon?: string;
+  badge?: string;
   imageUrl?: string;
   /** Data payload tambahan untuk deep-link */
   data?: Record<string, string>;
@@ -114,6 +125,8 @@ export interface CreateNotificationOptions {
   userId: string;
   title: string;
   body: string;
+  icon?: string;
+  badge?: string;
   imageUrl?: string;
   data?: Record<string, string>;
   expiresAt?: Date;
@@ -127,6 +140,8 @@ export interface FCMPayload {
   title: string;
   body: string;
   imageUrl?: string;
+  icon?: string;
+  badge?: string;
   data?: Record<string, string>;
 }
 

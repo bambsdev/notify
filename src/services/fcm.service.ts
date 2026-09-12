@@ -175,6 +175,15 @@ export class FCMService {
       body.message.data = payload.data;
     }
 
+    if (payload.icon || payload.badge) {
+      body.message.webpush = {
+        notification: {
+          ...(payload.icon && { icon: payload.icon }),
+          ...(payload.badge && { badge: payload.badge }),
+        },
+      };
+    }
+
     const response = await fetch(this.FCM_URL, {
       method: "POST",
       headers: {
@@ -289,6 +298,15 @@ export class FCMService {
 
     if (payload.data) {
       body.message.data = payload.data;
+    }
+
+    if (payload.icon || payload.badge) {
+      body.message.webpush = {
+        notification: {
+          ...(payload.icon && { icon: payload.icon }),
+          ...(payload.badge && { badge: payload.badge }),
+        },
+      };
     }
 
     const response = await fetch(this.FCM_URL, {

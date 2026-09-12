@@ -115,6 +115,8 @@ export class NotificationService<TDB = any> {
           const result = await this.fcm.sendToTokens(fcmTokens, {
             title: options.title,
             body: options.body,
+            icon: options.icon,
+            badge: options.badge,
             imageUrl: options.imageUrl,
             data: options.data,
           });
@@ -147,6 +149,8 @@ export class NotificationService<TDB = any> {
               this.webPush!.sendNotification(wp, {
                 title: options.title,
                 body: options.body,
+                icon: options.icon,
+                badge: options.badge,
                 imageUrl: options.imageUrl,
                 data: options.data,
               }),

@@ -48,4 +48,5 @@ export type {
   FCMSendResult,
   FCMBatchResult,
   WebPushSubscription,
+  WebPushPayload,
 } from "../types";
